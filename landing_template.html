@@ -487,79 +487,110 @@
 </div>
 
 <script>
+  /* ── Nav scroll ─────────────────────────────────────────────────────────── */
   window.addEventListener('scroll', function() {
     document.getElementById('nav').classList.toggle('scrolled', window.scrollY > 50);
   });
-  var ro = new IntersectionObserver(function(e) {
-    e.forEach(function(x) { if (x.isIntersecting) x.target.classList.add('vis'); });
+
+  /* ── Reveal animations (unobserve after first trigger) ──────────────────── */
+  var ro = new IntersectionObserver(function(entries) {
+    entries.forEach(function(x) {
+      if (x.isIntersecting) { x.target.classList.add('vis'); ro.unobserve(x.target); }
+    });
   }, { threshold: 0.1 });
   document.querySelectorAll('.reveal').forEach(function(el) { ro.observe(el); });
 
-  document.querySelectorAll('.ftab').forEach(function(btn) {
-    btn.addEventListener('click', function() {
-      document.querySelectorAll('.ftab').forEach(function(b) { b.classList.remove('active'); });
-      btn.classList.add('active');
-      var f = btn.dataset.f;
+  /* ── Gallery filter (single delegated listener on parent) ───────────────── */
+  var filterBar = document.querySelector('.filter-bar');
+  if (filterBar) {
+    filterBar.addEventListener('click', function(e) {
+      var tab = e.target.closest('.ftab');
+      if (!tab) return;
+      filterBar.querySelectorAll('.ftab').forEach(function(b) { b.classList.remove('active'); });
+      tab.classList.add('active');
+      var f = tab.dataset.f;
       document.querySelectorAll('.g-item').forEach(function(item) {
         item.classList.toggle('hidden', f !== 'all' && item.dataset.c !== f);
       });
     });
-  });
+  }
 
+  /* ── Lightbox ────────────────────────────────────────────────────────────── */
   function lb(src) { document.getElementById('lbImg').src = src; document.getElementById('lbWrap').classList.add('open'); document.body.style.overflow = 'hidden'; }
   function closeLb() { document.getElementById('lbWrap').classList.remove('open'); document.body.style.overflow = ''; }
   document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeLb(); });
 
+  /* ── Contact form ────────────────────────────────────────────────────────── */
   var btn = document.getElementById('submitBtn');
   var msg = document.getElementById('msgBox');
-  function showMsg(t,tp) { msg.className='fmsg '+tp; msg.textContent=t; msg.style.display='block'; }
-  function markErr(id) { var el=document.getElementById(id); el.classList.add('err'); el.addEventListener('input',function(){el.classList.remove('err');},{once:true}); }
+  function showMsg(t, tp) { msg.className = 'fmsg ' + tp; msg.textContent = t; msg.style.display = 'block'; }
+  function markErr(id) {
+    var el = document.getElementById(id);
+    el.classList.add('err');
+    el.addEventListener('input', function() { el.classList.remove('err'); }, { once: true });
+  }
+
   btn.addEventListener('click', async function() {
-    msg.style.display='none';
-    var name=document.getElementById('f-name').value.trim();
-    var phone=document.getElementById('f-phone').value.trim();
-    var email=document.getElementById('f-email').value.trim();
-    var notes=document.getElementById('f-notes').value.trim();
-    if(!name){markErr('f-name');showMsg('נא להזין שם מלא','err');return;}
-    if(!phone&&!email){markErr('f-phone');showMsg('נא להזין טלפון או אימייל','err');return;}
-    if(!notes){markErr('f-notes');showMsg('נא למלא את שדה ההודעה','err');return;}
-    btn.disabled=true; btn.textContent='שולח...';
+    msg.style.display = 'none';
+    var name  = document.getElementById('f-name').value.trim();
+    var phone = document.getElementById('f-phone').value.trim();
+    var email = document.getElementById('f-email').value.trim();
+    var notes = document.getElementById('f-notes').value.trim();
+
+    /* Array-driven validation */
+    var checks = [
+      { ok: !!name,            id: 'f-name',  text: 'נא להזין שם מלא' },
+      { ok: !!(phone || email),id: 'f-phone', text: 'נא להזין טלפון או אימייל' },
+      { ok: !!notes,           id: 'f-notes', text: 'נא למלא את שדה ההודעה' },
+    ];
+    for (var i = 0; i < checks.length; i++) {
+      if (!checks[i].ok) { markErr(checks[i].id); showMsg(checks[i].text, 'err'); return; }
+    }
+
+    btn.disabled = true; btn.textContent = 'שולח...';
     try {
-      /* ── 1. Airtable — save for CRM sync (fire-and-forget) ────── */
       var _atEp = 'AT_ENDPOINT', _atTk = 'AT_WRITE_TOKEN';
-      if (_atEp !== 'AT_ENDPOINT') {
-        fetch(_atEp, {
-          method: 'POST',
-          headers: {'Authorization': 'Bearer ' + _atTk, 'Content-Type': 'application/json'},
-          body: JSON.stringify({records:[{fields:{
-            Name: name, Phone: phone||'', Email: email||'',
-            Message: notes, Source: 'Landing Page'
-          }}]})
-        }).catch(function(){});
-      }
-      /* ── 2. Web3Forms — email notification (primary) ─────────── */
+
+      /* ── Fire both requests in parallel ─────────────────────────────────── */
+      /* Airtable (CRM sync) — we don't need its result, but starting it first */
+      var atPromise = (_atEp !== 'AT_ENDPOINT')
+        ? fetch(_atEp, {
+            method: 'POST',
+            headers: { 'Authorization': 'Bearer ' + _atTk, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ records: [{ fields: {
+              Name: name, Phone: phone || '', Email: email || '',
+              Message: notes, Source: 'Landing Page'
+            }}]})
+          }).catch(function() {})
+        : Promise.resolve();
+
+      /* Web3Forms (email notification — primary channel) */
       var fd = new FormData();
       fd.append('access_key', 'W3F_ACCESS_KEY');
-      fd.append('subject',   'ליד חדש — Vadim Vaisman Art');
-      fd.append('from_name', 'Vadim Vaisman Art Website');
-      fd.append('name',       name);
-      fd.append('phone',      phone || '—');
-      fd.append('email',      email || '—');
-      fd.append('message',    notes);
-      var res = await fetch('https://api.web3forms.com/submit', {
-        method: 'POST',
-        body:   fd
-      });
-      var data = {};
-      try { data = await res.json(); } catch(e) {}
-      if(data.success){
-        showMsg('תודה! קיבלנו את הפרטים שלך ונחזור אליך בקרוב 🙏','ok');
-        ['f-name','f-phone','f-email','f-notes'].forEach(function(id){document.getElementById(id).value='';});
+      fd.append('subject',    'ליד חדש — Vadim Vaisman Art');
+      fd.append('from_name',  'Vadim Vaisman Art Website');
+      fd.append('name',        name);
+      fd.append('phone',       phone || '—');
+      fd.append('email',       email || '—');
+      fd.append('message',     notes);
+      var w3fPromise = fetch('https://api.web3forms.com/submit', { method: 'POST', body: fd })
+        .then(function(r) { return r.json(); })
+        .catch(function() { return {}; });
+
+      /* Wait for both — Web3Forms result determines success message */
+      var results = await Promise.all([atPromise, w3fPromise]);
+      var data = results[1] || {};
+
+      if (data.success) {
+        showMsg('תודה! קיבלנו את הפרטים שלך ונחזור אליך בקרוב 🙏', 'ok');
+        ['f-name', 'f-phone', 'f-email', 'f-notes'].forEach(function(id) {
+          document.getElementById(id).value = '';
+        });
       } else {
-        showMsg('אירעה שגיאה — נסה לפנות אלינו בווטסאפ','err');
+        showMsg('אירעה שגיאה — נסה לפנות אלינו בווטסאפ', 'err');
       }
-    } catch(e){ showMsg('לא ניתן לשלוח — נסה לפנות אלינו בווטסאפ','err'); }
-    finally{ btn.disabled=false; btn.textContent='שלח פרטים'; }
+    } catch(e) { showMsg('לא ניתן לשלוח — נסה לפנות אלינו בווטסאפ', 'err'); }
+    finally { btn.disabled = false; btn.textContent = 'שלח פרטים'; }
   });
 </script>
 </body>

@@ -312,6 +312,23 @@
     .fmsg.ok  { background: #1a2e1a; border: 1px solid #2d5c2d; color: #7ecf7e; }
     .fmsg.err { background: #2e1a1a; border: 1px solid #5c2d2d; color: #cf7e7e; }
 
+    /* FILE UPLOAD */
+    .file-zone { position: relative; border: 1.5px dashed var(--border); border-radius: 10px; background: var(--bg2); transition: border-color .2s, background .2s; overflow: hidden; cursor: pointer; }
+    .file-zone:hover, .file-zone.drag { border-color: var(--gold); background: rgba(201,169,110,.06); }
+    .file-zone input[type="file"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; z-index: 2; }
+    .file-zone-ui { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 22px 16px; color: var(--muted); text-align: center; pointer-events: none; }
+    .file-zone-ui .fz-icon { font-size: 26px; line-height: 1; }
+    .file-zone-ui span { font-size: 14px; }
+    .file-zone-ui small { font-size: 11px; color: #555; letter-spacing: .3px; }
+    .file-preview { display: none; align-items: center; gap: 14px; padding: 12px 14px; }
+    .file-preview img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); flex-shrink: 0; }
+    .file-info { flex: 1; min-width: 0; }
+    .file-info .fn { font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .file-info .fs { font-size: 11px; color: #555; margin-top: 3px; }
+    .file-clear { flex-shrink: 0; background: rgba(255,255,255,.07); border: 1px solid var(--border); color: var(--muted); width: 28px; height: 28px; border-radius: 50%; font-size: 13px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .2s, color .2s; z-index: 3; position: relative; }
+    .file-clear:hover { background: rgba(207,126,126,.2); color: #cf7e7e; border-color: #cf7e7e; }
+    .file-err { font-size: 12px; color: #cf7e7e; margin-top: 5px; min-height: 16px; }
+
     /* FOOTER */
     footer { background: var(--bg); border-top: 1px solid var(--border); padding: 48px; text-align: center; }
     footer img { height: 44px; opacity: .55; margin-bottom: 20px; display: block; margin-inline: auto; }
@@ -463,6 +480,26 @@
           <div class="ff"><label>טלפון <span class="req">*</span> <span style="color:#555">(או אימייל)</span></label><input type="text" id="f-phone" name="phone" placeholder="050-0000000" inputmode="tel" maxlength="20" /></div>
           <div class="ff"><label>אימייל</label><input type="text" id="f-email" name="email" placeholder="mail@example.com" maxlength="120" /></div>
           <div class="ff"><label>הודעה <span class="req">*</span></label><textarea id="f-notes" name="notes" placeholder="ספרו לנו במה מדובר..." maxlength="1000"></textarea></div>
+          <div class="ff">
+            <label>תמונת רפרנס <span style="color:#555;font-weight:400">(אופציונלי)</span></label>
+            <div class="file-zone" id="fileZone">
+              <input type="file" id="f-file" accept=".jpg,.jpeg,.png,.webp,.gif" tabindex="-1" />
+              <div class="file-zone-ui" id="fileZoneUI">
+                <span class="fz-icon">📎</span>
+                <span>לחצו לבחירת תמונה רפרנס</span>
+                <small>JPG · PNG · WebP · GIF &nbsp;|&nbsp; עד 5MB</small>
+              </div>
+              <div class="file-preview" id="filePreview">
+                <img id="prevImg" src="" alt="תצוגה מקדימה" />
+                <div class="file-info">
+                  <div class="fn" id="fileName"></div>
+                  <div class="fs" id="fileSize"></div>
+                </div>
+                <button type="button" class="file-clear" id="fileClear" title="הסר קובץ">✕</button>
+              </div>
+            </div>
+            <div class="file-err" id="fileErr"></div>
+          </div>
           <button type="button" id="submitBtn" class="csub">שלח פרטים</button>
           <div class="fmsg" id="msgBox"></div>
         </form>
@@ -520,6 +557,107 @@
   function closeLb() { document.getElementById('lbWrap').classList.remove('open'); document.body.style.overflow = ''; }
   document.addEventListener('keydown', function(e) { if (e.key === 'Escape') closeLb(); });
 
+  /* ── File upload: security validation ───────────────────────────────────── */
+  var MAX_FILE_BYTES = 5 * 1024 * 1024;                          // 5 MB
+  var ALLOWED_MIME   = { 'image/jpeg':1, 'image/png':1, 'image/webp':1, 'image/gif':1 };
+  var ALLOWED_EXT    = { 'jpg':1, 'jpeg':1, 'png':1, 'webp':1, 'gif':1 };
+
+  /* Magic-bytes check — reads first 12 bytes, verifies actual image format */
+  function _validMagic(buf) {
+    var b = new Uint8Array(buf);
+    var isJPEG = b[0]===0xFF && b[1]===0xD8 && b[2]===0xFF;
+    var isPNG  = b[0]===0x89 && b[1]===0x50 && b[2]===0x4E && b[3]===0x47;
+    var isWebP = b[0]===0x52 && b[1]===0x49 && b[2]===0x46 && b[3]===0x46
+              && b[8]===0x57 && b[9]===0x45 && b[10]===0x42 && b[11]===0x50;
+    var isGIF  = b[0]===0x47 && b[1]===0x49 && b[2]===0x46 && b[3]===0x38;
+    return isJPEG || isPNG || isWebP || isGIF;
+  }
+
+  async function validateRefFile(file) {
+    if (!ALLOWED_MIME[file.type])
+      return 'סוג קובץ לא מורשה — JPG / PNG / WebP / GIF בלבד';
+    var ext = file.name.split('.').pop().toLowerCase();
+    if (!ALLOWED_EXT[ext])
+      return 'סיומת קובץ לא תקינה';
+    if (file.size > MAX_FILE_BYTES)
+      return 'הקובץ גדול מדי — מקסימום 5MB';
+    var buf = await file.slice(0, 12).arrayBuffer();
+    if (!_validMagic(buf))
+      return 'הקובץ אינו תמונה תקינה (בדיקת bytes נכשלה)';
+    return null;   // ✓ passed all checks
+  }
+
+  /* ── File upload: UI wiring ─────────────────────────────────────────────── */
+  var fileInput   = document.getElementById('f-file');
+  var fileZone    = document.getElementById('fileZone');
+  var fileZoneUI  = document.getElementById('fileZoneUI');
+  var filePreview = document.getElementById('filePreview');
+  var prevImg     = document.getElementById('prevImg');
+  var fileErrEl   = document.getElementById('fileErr');
+  var selectedFile = null;
+
+  function fmtBytes(n) {
+    return n < 1024 ? n + ' B'
+         : n < 1048576 ? (n/1024).toFixed(1) + ' KB'
+         : (n/1048576).toFixed(1) + ' MB';
+  }
+
+  function showFilePreview(file) {
+    document.getElementById('fileName').textContent = file.name;
+    document.getElementById('fileSize').textContent = fmtBytes(file.size);
+    var reader = new FileReader();
+    reader.onload = function(e) { prevImg.src = e.target.result; };
+    reader.readAsDataURL(file);
+    fileZoneUI.style.display  = 'none';
+    filePreview.style.display = 'flex';
+    fileInput.style.display   = 'none';   // prevent re-trigger while preview shown
+  }
+
+  function clearFile() {
+    selectedFile              = null;
+    fileInput.value           = '';
+    prevImg.src               = '';
+    filePreview.style.display = 'none';
+    fileZoneUI.style.display  = '';
+    fileInput.style.display   = '';
+    fileErrEl.textContent     = '';
+  }
+
+  document.getElementById('fileClear').addEventListener('click', function(e) {
+    e.stopPropagation();
+    clearFile();
+  });
+
+  fileInput.addEventListener('change', async function() {
+    fileErrEl.textContent = '';
+    var file = fileInput.files[0];
+    if (!file) return;
+    var err = await validateRefFile(file);
+    if (err) {
+      fileErrEl.textContent = err;
+      fileInput.value = '';
+      return;
+    }
+    selectedFile = file;
+    showFilePreview(file);
+  });
+
+  /* Drag-and-drop */
+  fileZone.addEventListener('dragover',  function(e) { e.preventDefault(); fileZone.classList.add('drag'); });
+  fileZone.addEventListener('dragleave', function()  { fileZone.classList.remove('drag'); });
+  fileZone.addEventListener('drop', async function(e) {
+    e.preventDefault();
+    fileZone.classList.remove('drag');
+    if (selectedFile) return;           // already has a file — ignore
+    var file = e.dataTransfer.files[0];
+    if (!file) return;
+    fileErrEl.textContent = '';
+    var err = await validateRefFile(file);
+    if (err) { fileErrEl.textContent = err; return; }
+    selectedFile = file;
+    showFilePreview(file);
+  });
+
   /* ── Contact form ────────────────────────────────────────────────────────── */
   var btn = document.getElementById('submitBtn');
   var msg = document.getElementById('msgBox');
@@ -539,32 +677,38 @@
 
     /* Array-driven validation */
     var checks = [
-      { ok: !!name,            id: 'f-name',  text: 'נא להזין שם מלא' },
-      { ok: !!(phone || email),id: 'f-phone', text: 'נא להזין טלפון או אימייל' },
-      { ok: !!notes,           id: 'f-notes', text: 'נא למלא את שדה ההודעה' },
+      { ok: !!name,             id: 'f-name',  text: 'נא להזין שם מלא' },
+      { ok: !!(phone || email), id: 'f-phone', text: 'נא להזין טלפון או אימייל' },
+      { ok: !!notes,            id: 'f-notes', text: 'נא למלא את שדה ההודעה' },
     ];
     for (var i = 0; i < checks.length; i++) {
       if (!checks[i].ok) { markErr(checks[i].id); showMsg(checks[i].text, 'err'); return; }
     }
 
+    /* Re-validate file if one is selected (guard against race conditions) */
+    if (selectedFile) {
+      var fErr = await validateRefFile(selectedFile);
+      if (fErr) { fileErrEl.textContent = fErr; showMsg('קובץ לא תקין — הסירו אותו ונסו שוב', 'err'); return; }
+    }
+
     btn.disabled = true; btn.textContent = 'שולח...';
     try {
       var _atEp = 'AT_ENDPOINT', _atTk = 'AT_WRITE_TOKEN';
+      var msgWithFile = notes + (selectedFile ? '\n\n📎 תמונת רפרנס מצורפת: ' + selectedFile.name : '');
 
       /* ── Fire both requests in parallel ─────────────────────────────────── */
-      /* Airtable (CRM sync) — we don't need its result, but starting it first */
       var atPromise = (_atEp !== 'AT_ENDPOINT')
         ? fetch(_atEp, {
             method: 'POST',
             headers: { 'Authorization': 'Bearer ' + _atTk, 'Content-Type': 'application/json' },
             body: JSON.stringify({ records: [{ fields: {
               Name: name, Phone: phone || '', Email: email || '',
-              Message: notes, Source: 'Landing Page'
+              Message: msgWithFile, Source: 'Landing Page'
             }}]})
           }).catch(function() {})
         : Promise.resolve();
 
-      /* Web3Forms (email notification — primary channel) */
+      /* Web3Forms — includes the image file as an email attachment */
       var fd = new FormData();
       fd.append('access_key', 'W3F_ACCESS_KEY');
       fd.append('subject',    'ליד חדש — Vadim Vaisman Art');
@@ -572,12 +716,12 @@
       fd.append('name',        name);
       fd.append('phone',       phone || '—');
       fd.append('email',       email || '—');
-      fd.append('message',     notes);
+      fd.append('message',     msgWithFile);
+      if (selectedFile) fd.append('attachment', selectedFile, selectedFile.name);
       var w3fPromise = fetch('https://api.web3forms.com/submit', { method: 'POST', body: fd })
         .then(function(r) { return r.json(); })
         .catch(function() { return {}; });
 
-      /* Wait for both — Web3Forms result determines success message */
       var results = await Promise.all([atPromise, w3fPromise]);
       var data = results[1] || {};
 
@@ -586,6 +730,7 @@
         ['f-name', 'f-phone', 'f-email', 'f-notes'].forEach(function(id) {
           document.getElementById(id).value = '';
         });
+        clearFile();
       } else {
         showMsg('אירעה שגיאה — נסה לפנות אלינו בווטסאפ', 'err');
       }
